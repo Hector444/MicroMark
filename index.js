@@ -1,8 +1,8 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.2
+ * [NexusDev] - NexusConverter Microservice v2.2.1
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.2 Update: Added YouTube download and conversion capabilities via a new /convert/youtube endpoint.
+ * v2.2.1 Update: Added robust error handling and better format selection for the YouTube download stream to prevent empty file errors.
  */
 const express = require('express');
 const multer = require('multer');
@@ -24,7 +24,7 @@ const upload = multer({
 const TMP_DIR = '/tmp';
 
 // --- Middleware ---
-app.use(express.json()); // Para poder leer JSON en el body de la petición de YouTube
+app.use(express.json());
 app.use((req, res, next) => {
     console.log(`[NexusConverter] Request received: ${req.method} ${req.path}`);
     next();
@@ -106,7 +106,7 @@ app.post('/convert/document', upload.single('document'), (req, res) => {
 });
 
 /**
- * [NUEVO] Endpoint para descargar y convertir videos de YouTube.
+ * [NUEVO Y MEJORADO] Endpoint para descargar y convertir videos de YouTube.
  * @route POST /convert/youtube
  */
 app.post('/convert/youtube', async (req, res) => {
@@ -118,8 +118,24 @@ app.post('/convert/youtube', async (req, res) => {
         }
 
         console.log(`[NexusConverter] Iniciando descarga y conversión de: ${youtubeUrl}`);
-        
-        const videoStream = ytdl(youtubeUrl, { filter: 'audioandvideo', quality: 'highest' });
+
+        // --- MEJORA CLAVE ---
+        // 1. Seleccionamos un formato que tenga video y audio explícitamente.
+        // 2. Añadimos un listener de errores al stream de ytdl.
+        const videoStream = ytdl(youtubeUrl, { 
+            filter: 'audioandvideo',
+            quality: 'highestvideo'
+        });
+
+        videoStream.on('error', (err) => {
+            console.error('[NexusConverter] Error en el stream de YTDL:', err.message);
+            // Si el stream falla, no continuamos y evitamos que ffmpeg cree un archivo vacío.
+            if (!res.headersSent) {
+                 res.status(500).json({ success: false, error: 'Fallo al descargar el video de YouTube.', details: err.message });
+            }
+        });
+        // --------------------
+
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const outputPath = path.join(TMP_DIR, `output-${uniqueSuffix}.${format}`);
 
@@ -129,7 +145,9 @@ app.post('/convert/youtube', async (req, res) => {
             .toFormat(format)
             .on('error', (err) => {
                 console.error('[NexusConverter] Error en FFMPEG (YouTube):', err);
-                return res.status(500).json({ success: false, error: 'Fallo en la conversión del video de YouTube.', details: err.message });
+                if (!res.headersSent) {
+                    res.status(500).json({ success: false, error: 'Fallo en la conversión del video de YouTube.', details: err.message });
+                }
             })
             .on('end', () => {
                 console.log('[NexusConverter] Conversión de YouTube finalizada con éxito.');
@@ -143,16 +161,18 @@ app.post('/convert/youtube', async (req, res) => {
 
     } catch (error) {
         console.error('[NexusConverter] Error en /convert/youtube:', error);
-        res.status(500).json({ success: false, error: 'Error interno del servidor.', details: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, error: 'Error interno del servidor.', details: error.message });
+        }
     }
 });
 
 
 // Ruta de Health Check
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.2.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.2.1', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-  console.log(`[NexusDev] NexusConverter service v2.2 está listo y escuchando en el puerto ${PORT}`);
+  console.log(`[NexusDev] NexusConverter service v2.2.1 está listo y escuchando en el puerto ${PORT}`);
 });
