@@ -1,4 +1,5 @@
 # --- Fase 1: Builder ---
+# Usamos una imagen completa de Node para instalar dependencias
 FROM node:18-bullseye-slim AS builder
 WORKDIR /usr/src/app
 
@@ -9,6 +10,7 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 # --- Fase 2: Production ---
+# Usamos la imagen slim de Debian (Bullseye) para la ejecución final
 FROM node:18-bullseye-slim
 WORKDIR /usr/src/app
 
