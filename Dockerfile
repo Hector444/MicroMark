@@ -1,5 +1,4 @@
 # --- Fase 1: Builder ---
-# Usamos una imagen completa de Node para instalar dependencias
 FROM node:18-bullseye-slim AS builder
 WORKDIR /usr/src/app
 
@@ -10,15 +9,20 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 # --- Fase 2: Production ---
-# Usamos la imagen slim de Debian (Bullseye) para la ejecución final
 FROM node:18-bullseye-slim
 WORKDIR /usr/src/app
 
-# Instalar dependencias clave del sistema: FFMPEG y LibreOffice
-# Esta versión de Debian tiene mejores fuentes y compatibilidad
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Habilitar el repositorio 'contrib' para acceder a las fuentes de MS
+RUN sed -i 's/main/main contrib/g' /etc/apt/sources.list.d/debian.sources
+
+# Instalar dependencias clave y AÑADIR FUENTES DE MICROSOFT
+RUN apt-get update && \
+    # Aceptar la licencia de las fuentes de MS de forma no interactiva
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
+    apt-get install -y --no-install-recommends \
     ffmpeg \
     libreoffice \
+    ttf-mscorefonts-installer \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copiamos las dependencias ya instaladas desde la fase de builder
