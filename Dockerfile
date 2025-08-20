@@ -1,22 +1,25 @@
 # --- Fase 1: Builder ---
 # Usamos una imagen completa de Node para instalar dependencias
-FROM node:18-alpine AS builder
+FROM node:18-bullseye-slim AS builder
 WORKDIR /usr/src/app
 
-# Instalar dependencias del sistema operativo: git para dependencias de npm
-RUN apk add --no-cache git
+# Instalar dependencias del sistema operativo
+RUN apt-get update && apt-get install -y --no-install-recommends git
 
 COPY package*.json ./
 RUN npm install --omit=dev
 
 # --- Fase 2: Production ---
-# Usamos una imagen ligera para la ejecución final
-FROM node:18-alpine
+# Usamos la imagen slim de Debian (Bullseye) para la ejecución final
+FROM node:18-bullseye-slim
 WORKDIR /usr/src/app
 
 # Instalar dependencias clave del sistema: FFMPEG y LibreOffice
-# python3 y py3-pip son necesarios para el conversor de libreoffice
-RUN apk add --no-cache ffmpeg libreoffice python3 py3-pip
+# Esta versión de Debian tiene mejores fuentes y compatibilidad
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libreoffice \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copiamos las dependencias ya instaladas desde la fase de builder
 COPY --from=builder /usr/src/app/node_modules ./node_modules
