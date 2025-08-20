@@ -1,4 +1,5 @@
 # --- Fase 1: Builder ---
+# Usamos una imagen completa de Node para instalar dependencias
 FROM node:18-bullseye-slim AS builder
 WORKDIR /usr/src/app
 
@@ -9,14 +10,15 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 # --- Fase 2: Production ---
+# Usamos la imagen slim de Debian (Bullseye) para la ejecución final
 FROM node:18-bullseye-slim
 WORKDIR /usr/src/app
 
-# Habilitar el repositorio 'contrib' para acceder a las fuentes de MS
-RUN sed -i 's/main/main contrib/g' /etc/apt/sources.list.d/debian.sources
-
 # Instalar dependencias clave y AÑADIR FUENTES DE MICROSOFT
 RUN apt-get update && \
+    # Habilitar los repositorios 'contrib' y 'non-free' editando el archivo principal
+    sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list && \
+    apt-get update && \
     # Aceptar la licencia de las fuentes de MS de forma no interactiva
     echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
     apt-get install -y --no-install-recommends \
