@@ -1,9 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.6.0
+ * [NexusDev] - NexusConverter Microservice v2.7.1
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.6.0 Update: Added intelligent background trimming for watermarks.
- * - The service now attempts to automatically remove solid backgrounds from the watermark image before composition.
+ * v2.7.1 Update: Optimized three-layer composition for professional branding with transparent PNGs.
+ * - Layer 1: 800x800 white canvas background.
+ * - Layer 2: Main image resized to 800x800.
+ * - Layer 3: Watermark (assumed transparent PNG) resized to 800x800 with 15% opacity.
  */
 const express = require('express');
 const multer = require('multer');
@@ -37,7 +39,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.6.0
+// NexusDev: Inicia la actualización del endpoint de imagen v2.7.1
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -47,69 +49,52 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
         if (!imageFile) {
             return res.status(400).json({ success: false, error: 'Campo "image" requerido.' });
         }
+        if (!watermarkFile) {
+            return res.status(400).json({ success: false, error: 'Campo "watermark" requerido.' });
+        }
 
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        // 1. Estandarizar la imagen base a 800x800
-        let imageProcessor = sharp(imageFile.buffer).resize(800, 800, {
-            fit: 'cover',
-            position: 'attention'
-        });
-        
-        // --- Lógica de Marca de Agua Mejorada ---
-        if (watermarkFile) {
-            console.log('[NexusConverter] Aplicando marca de agua con recorte de fondo...');
-            
-            // 2. Recortar fondo, redimensionar y aplicar opacidad
-            const watermarkWithOpacityBuffer = await sharp(watermarkFile.buffer)
-                .trim() // <-- ¡ESTA LÍNEA RESUELVE EL PROBLEMA DEL FONDO BLANCO!
-                .resize({ width: 200 })
-                .composite([{
-                    input: Buffer.from([0, 0, 0, 255 * 0.15]),
-                    raw: { width: 1, height: 1, channels: 4 },
-                    tile: true,
-                    blend: 'dest-in'
-                }])
-                .toBuffer();
+        // --- Lógica de Composición en 3 Capas ---
+        console.log('[NexusConverter] Iniciando composición de 3 capas...');
 
-            // 3. Calcular posición
-            const watermarkMetadata = await sharp(watermarkWithOpacityBuffer).metadata();
-            const margin = Math.round(800 * 0.02);
-            const top = 800 - watermarkMetadata.height - margin;
-            const left = 800 - watermarkMetadata.width - margin;
-            
-            // 4. Superponer la imagen
-            imageProcessor.composite([{
-                input: watermarkWithOpacityBuffer,
-                top: top,
-                left: left,
-            }]);
-            console.log('[NexusConverter] Marca de agua mejorada compuesta exitosamente.');
-        }
-        
-        // --- Conversión de Formato y Salida ---
-        let outputImage;
-        switch (targetFormat.toLowerCase()) {
-            case 'jpeg':
-            case 'jpg':
-                outputImage = await imageProcessor.jpeg({ quality }).toBuffer();
-                res.setHeader('Content-Type', 'image/jpeg');
-                break;
-            case 'png':
-                outputImage = await imageProcessor.png().toBuffer();
-                res.setHeader('Content-Type', 'image/png');
-                break;
-            case 'webp':
-                outputImage = await imageProcessor.webp({ quality }).toBuffer();
-                res.setHeader('Content-Type', 'image/webp');
-                break;
-            default:
-                return res.status(400).json({ success: false, error: `Formato no soportado: ${targetFormat}` });
-        }
+        // Capa 2: Imagen del equipo, procesada
+        const mainImageBuffer = await sharp(imageFile.buffer)
+            .resize(800, 800, { fit: 'cover', position: 'attention' })
+            .toBuffer();
 
-        console.log(`[NexusConverter] Imagen convertida a ${targetFormat} con calidad ${quality}.`);
-        res.send(outputImage);
+        // Capa 3: Marca de agua, procesada (asumiendo PNG transparente)
+        const watermarkBuffer = await sharp(watermarkFile.buffer)
+            .resize(800, 800)
+            .composite([{
+                input: Buffer.from([255, 255, 255, 255 * 0.85]), // Capa de opacidad (85% transparente)
+                raw: { width: 1, height: 1, channels: 4 },
+                tile: true,
+                blend: 'multiply'
+            }])
+            .toBuffer();
+
+        // Capa 1 (Lienzo) y Composición final
+        const finalImage = await sharp({
+            create: {
+                width: 800,
+                height: 800,
+                channels: 4,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            }
+        })
+        .composite([
+            { input: mainImageBuffer, top: 0, left: 0 },
+            { input: watermarkBuffer, top: 0, left: 0 }
+        ])
+        .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
+        .toBuffer();
+
+        console.log('[NexusConverter] Composición de 3 capas finalizada exitosamente.');
+
+        res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
+        res.send(finalImage);
 
     } catch (error) {
         console.error('[NexusConverter] Error en /convert/image:', error);
@@ -221,11 +206,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.6.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.7.1', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.6.0 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v2.7.1 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
