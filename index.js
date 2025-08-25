@@ -1,9 +1,10 @@
 /**
- * [NexusDev] - NexusConverter Microservice v3.0.1
+ * [NexusDev] - NexusConverter Microservice v3.1.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v3.0.1 Update: Increased watermark size for greater visual impact.
- * - Watermark is now resized to 85% of the main image's width.
+ * v3.1.0 Update: Switched to 'overlay' blend mode for a more professional and integrated watermark effect.
+ * - Watermark is resized to 85% of the main image's width.
+ * - Opacity is now handled by the 'overlay' blend mode for superior visual results.
  */
 const express = require('express');
 const multer = require('multer');
@@ -37,7 +38,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v3.0.1
+// NexusDev: Inicia la actualización del endpoint de imagen v3.1.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -51,31 +52,29 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        console.log('[NexusConverter] Aplicando marca de agua grande y centrada (v3.0.1)...');
+        console.log('[NexusConverter] Aplicando marca de agua con modo de fusión "overlay"...');
 
         const imageProcessor = sharp(imageFile.buffer);
         const imageMetadata = await imageProcessor.metadata();
 
-        // --- Lógica de Marca de Agua Robusta ---
-        // 1. Redimensionar la marca de agua
-        // 2. Aplicar opacidad del 80% de forma directa
+        // Procesar la marca de agua: solo se redimensiona. La opacidad se manejará con el 'blend'.
         const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize({ width: Math.round(imageMetadata.width * 0.85) }) // <-- ¡AQUÍ ESTÁ EL CAMBIO! Marca de agua al 85% del ancho.
-            .ensureAlpha(0.8) // Opacidad al 80%
+            .resize({ width: Math.round(imageMetadata.width * 0.85) }) // Mantenemos el tamaño grande
             .toBuffer();
 
-        // Composición final: superponer la marca de agua en el centro
+        // Composición final: superponer la marca de agua en el centro usando el modo 'overlay'
         const finalImage = await imageProcessor
             .composite([
                 {
                     input: watermarkBuffer,
-                    gravity: 'center' // Centra la marca de agua
+                    gravity: 'center',
+                    blend: 'overlay' // <-- ¡ESTE ES EL CAMBIO ESTRATÉGICO!
                 }
             ])
             .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
             .toBuffer();
 
-        console.log('[NexusConverter] Marca de agua centrada y agrandada aplicada exitosamente.');
+        console.log('[NexusConverter] Marca de agua con "overlay" aplicada exitosamente.');
 
         res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
         res.send(finalImage);
@@ -190,11 +189,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '3.0.1', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '3.1.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v3.0.1 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v3.1.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
