@@ -1,11 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.8.0
+ * [NexusDev] - NexusConverter Microservice v2.9.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.8.0 Update: Refined image composition to create a framed product image with a corner watermark.
- * - Layer 1: 800x800 white canvas background (frame).
- * - Layer 2: Main image centered and resized to 780x780.
- * - Layer 3: Small, transparent watermark placed in the bottom-right corner.
+ * v2.9.0 Update: Logic changed to apply a large, semi-transparent watermark centered on the original image.
+ * - No background frame is created.
+ * - Main image is used as the base layer.
+ * - Watermark is resized to 65% of the main image's width, centered, and set to 40% opacity.
  */
 const express = require('express');
 const multer = require('multer');
@@ -39,7 +39,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.8.0
+// NexusDev: Inicia la actualización del endpoint de imagen v2.9.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -53,49 +53,34 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        console.log('[NexusConverter] Iniciando composición de imagen con marco...');
+        console.log('[NexusConverter] Aplicando marca de agua grande y centrada...');
 
-        // Capa 2: Imagen del equipo, redimensionada con borde.
-        const mainImageBuffer = await sharp(imageFile.buffer)
-            .resize(780, 780, { fit: 'cover', position: 'attention' })
-            .toBuffer();
+        const imageProcessor = sharp(imageFile.buffer);
+        const imageMetadata = await imageProcessor.metadata();
 
-        // Capa 3: Marca de agua, pequeña y con opacidad.
+        // Procesar la marca de agua: redimensionar y aplicar opacidad
         const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize({ width: 200 }) // Tamaño pequeño y proporcional
+            .resize({ width: Math.round(imageMetadata.width * 0.65) }) // Marca de agua al 65% del ancho
             .composite([{
-                input: Buffer.from([255, 255, 255, 255 * 0.15]), // Opacidad del 85%
+                input: Buffer.from([255, 255, 255, 255 * 0.60]), // Opacidad del 40% (60% transparente)
                 raw: { width: 1, height: 1, channels: 4 },
                 tile: true,
                 blend: 'dest-in'
             }])
             .toBuffer();
-        
-        const watermarkMetadata = await sharp(watermarkBuffer).metadata();
 
-        // Calcular posición de la marca de agua en la esquina inferior derecha de la imagen principal
-        const imageMargin = 10; // 10px de borde (800 - 780) / 2
-        const watermarkMargin = 15; // Margen interno para la marca de agua
-        const topPosition = (800 - watermarkMetadata.height) - watermarkMargin;
-        const leftPosition = (800 - watermarkMetadata.width) - watermarkMargin;
+        // Composición final: superponer la marca de agua en el centro de la imagen principal
+        const finalImage = await imageProcessor
+            .composite([
+                {
+                    input: watermarkBuffer,
+                    gravity: 'center' // ¡AQUÍ ESTÁ LA MAGIA! Centra la marca de agua.
+                }
+            ])
+            .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
+            .toBuffer();
 
-        // Capa 1 (Lienzo) y Composición final
-        const finalImage = await sharp({
-            create: {
-                width: 800,
-                height: 800,
-                channels: 4,
-                background: { r: 255, g: 255, b: 255, alpha: 1 } // Fondo blanco
-            }
-        })
-        .composite([
-            { input: mainImageBuffer, gravity: 'center' }, // Centra la imagen del equipo
-            { input: watermarkBuffer, top: topPosition, left: leftPosition } // Posiciona la marca de agua
-        ])
-        .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
-        .toBuffer();
-
-        console.log('[NexusConverter] Composición con marco finalizada exitosamente.');
+        console.log('[NexusConverter] Marca de agua centrada aplicada exitosamente.');
 
         res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
         res.send(finalImage);
@@ -210,11 +195,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.8.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.9.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.8.0 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v2.9.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
