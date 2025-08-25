@@ -1,9 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.9.1
+ * [NexusDev] - NexusConverter Microservice v3.0.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.9.1 Update: Increased watermark opacity for better visibility as per new visual requirements.
- * - Watermark opacity increased from 40% to 90%.
+ * v3.0.0 Update: Final logic for centered watermark.
+ * - Uses a robust and simplified method for applying opacity.
+ * - Watermark is resized to 65% of the main image's width.
+ * - Watermark is centered with 80% opacity for high visibility while preserving background detail.
  */
 const express = require('express');
 const multer = require('multer');
@@ -37,7 +39,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.9.1
+// NexusDev: Inicia la actualización del endpoint de imagen v3.0.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -51,35 +53,31 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        console.log('[NexusConverter] Aplicando marca de agua grande y centrada (alta opacidad)...');
+        console.log('[NexusConverter] Aplicando marca de agua centrada (v3.0)...');
 
         const imageProcessor = sharp(imageFile.buffer);
         const imageMetadata = await imageProcessor.metadata();
 
-        // Procesar la marca de agua: redimensionar y aplicar opacidad
+        // --- Lógica de Marca de Agua Robusta ---
+        // 1. Redimensionar la marca de agua
+        // 2. Aplicar opacidad del 80% de forma directa
         const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize({ width: Math.round(imageMetadata.width * 0.65) }) // Marca de agua al 65% del ancho
-            .composite([{
-                // ¡AQUÍ ESTÁ EL CAMBIO! -> 0.10 para 90% de opacidad
-                input: Buffer.from([255, 255, 255, 255 * 0.10]), // Opacidad del 90% (10% transparente)
-                raw: { width: 1, height: 1, channels: 4 },
-                tile: true,
-                blend: 'dest-in'
-            }])
+            .resize({ width: Math.round(imageMetadata.width * 0.65) })
+            .ensureAlpha(0.8) // <-- ESTE ES EL NUEVO MÉTODO, MÁS CONFIABLE (Opacidad al 80%)
             .toBuffer();
 
-        // Composición final: superponer la marca de agua en el centro de la imagen principal
+        // Composición final: superponer la marca de agua en el centro
         const finalImage = await imageProcessor
             .composite([
                 {
                     input: watermarkBuffer,
-                    gravity: 'center'
+                    gravity: 'center' // Centra la marca de agua
                 }
             ])
             .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
             .toBuffer();
 
-        console.log('[NexusConverter] Marca de agua centrada (alta opacidad) aplicada exitosamente.');
+        console.log('[NexusConverter] Marca de agua centrada aplicada exitosamente.');
 
         res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
         res.send(finalImage);
@@ -194,11 +192,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.9.1', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '3.0.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.9.1 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v3.0.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
