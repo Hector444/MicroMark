@@ -1,10 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v3.1.0
+ * [NexusDev] - NexusConverter Microservice v4.0.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v3.1.0 Update: Switched to 'overlay' blend mode for a more professional and integrated watermark effect.
- * - Watermark is resized to 85% of the main image's width.
- * - Opacity is now handled by the 'overlay' blend mode for superior visual results.
+ * v4.0.0 Update: Rebuilt the image logic to create a "product sheet" composition.
+ * - Creates a vertical 800x1000 white canvas.
+ * - Places the main product image (800x800) at the top.
+ * - Places the logo, resized, in the bottom section.
  */
 const express = require('express');
 const multer = require('multer');
@@ -38,43 +39,60 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v3.1.0
+// NexusDev: Inicia la actualización del endpoint de imagen v4.0.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
         const imageFile = req.files.image ? req.files.image[0] : null;
-        const watermarkFile = req.files.watermark ? req.files.watermark[0] : null;
+        // El "watermark" ahora lo trataremos como el "logo"
+        const logoFile = req.files.watermark ? req.files.watermark[0] : null;
 
-        if (!imageFile || !watermarkFile) {
-            return res.status(400).json({ success: false, error: 'Se requieren los campos "image" y "watermark".' });
+        if (!imageFile || !logoFile) {
+            return res.status(400).json({ success: false, error: 'Se requieren los campos "image" y "watermark" (logo).' });
         }
 
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        console.log('[NexusConverter] Aplicando marca de agua con modo de fusión "overlay"...');
+        console.log('[NexusConverter] Creando ficha de producto (v4.0.0)...');
 
-        const imageProcessor = sharp(imageFile.buffer);
-        const imageMetadata = await imageProcessor.metadata();
-
-        // Procesar la marca de agua: solo se redimensiona. La opacidad se manejará con el 'blend'.
-        const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize({ width: Math.round(imageMetadata.width * 0.85) }) // Mantenemos el tamaño grande
+        // 1. Preparar la imagen del producto (capa superior)
+        const productImageBuffer = await sharp(imageFile.buffer)
+            .resize(800, 800, { fit: 'cover', position: 'attention' })
             .toBuffer();
 
-        // Composición final: superponer la marca de agua en el centro usando el modo 'overlay'
-        const finalImage = await imageProcessor
-            .composite([
-                {
-                    input: watermarkBuffer,
-                    gravity: 'center',
-                    blend: 'overlay' // <-- ¡ESTE ES EL CAMBIO ESTRATÉGICO!
-                }
-            ])
-            .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
+        // 2. Preparar el logo (capa inferior)
+        const logoImageBuffer = await sharp(logoFile.buffer)
+            .resize({ width: 400 }) // Redimensionar el logo a un ancho de 400px
             .toBuffer();
 
-        console.log('[NexusConverter] Marca de agua con "overlay" aplicada exitosamente.');
+        const logoMetadata = await sharp(logoImageBuffer).metadata();
+        
+        // 3. Calcular la posición del logo para centrarlo en el área inferior
+        const canvasWidth = 800;
+        const canvasHeight = 1000;
+        const mainImageHeight = 800;
+
+        const logoTopPosition = mainImageHeight + Math.round(((canvasHeight - mainImageHeight) - logoMetadata.height) / 2);
+        const logoLeftPosition = Math.round((canvasWidth - logoMetadata.width) / 2);
+
+        // 4. Crear lienzo y componer la imagen final
+        const finalImage = await sharp({
+            create: {
+                width: canvasWidth,
+                height: canvasHeight,
+                channels: 4,
+                background: { r: 255, g: 255, b: 255, alpha: 1 } // Fondo blanco
+            }
+        })
+        .composite([
+            { input: productImageBuffer, top: 0, left: 0 },
+            { input: logoImageBuffer, top: logoTopPosition, left: logoLeftPosition }
+        ])
+        .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
+        .toBuffer();
+
+        console.log('[NexusConverter] Ficha de producto creada exitosamente.');
 
         res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
         res.send(finalImage);
@@ -189,11 +207,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '3.1.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '4.0.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v3.1.0 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v4.0.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
