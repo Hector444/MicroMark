@@ -1,11 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.7.1
+ * [NexusDev] - NexusConverter Microservice v2.8.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.7.1 Update: Optimized three-layer composition for professional branding with transparent PNGs.
- * - Layer 1: 800x800 white canvas background.
- * - Layer 2: Main image resized to 800x800.
- * - Layer 3: Watermark (assumed transparent PNG) resized to 800x800 with 15% opacity.
+ * v2.8.0 Update: Refined image composition to create a framed product image with a corner watermark.
+ * - Layer 1: 800x800 white canvas background (frame).
+ * - Layer 2: Main image centered and resized to 780x780.
+ * - Layer 3: Small, transparent watermark placed in the bottom-right corner.
  */
 const express = require('express');
 const multer = require('multer');
@@ -39,41 +39,45 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.7.1
+// NexusDev: Inicia la actualización del endpoint de imagen v2.8.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
         const imageFile = req.files.image ? req.files.image[0] : null;
         const watermarkFile = req.files.watermark ? req.files.watermark[0] : null;
 
-        if (!imageFile) {
-            return res.status(400).json({ success: false, error: 'Campo "image" requerido.' });
-        }
-        if (!watermarkFile) {
-            return res.status(400).json({ success: false, error: 'Campo "watermark" requerido.' });
+        if (!imageFile || !watermarkFile) {
+            return res.status(400).json({ success: false, error: 'Se requieren los campos "image" y "watermark".' });
         }
 
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        // --- Lógica de Composición en 3 Capas ---
-        console.log('[NexusConverter] Iniciando composición de 3 capas...');
+        console.log('[NexusConverter] Iniciando composición de imagen con marco...');
 
-        // Capa 2: Imagen del equipo, procesada
+        // Capa 2: Imagen del equipo, redimensionada con borde.
         const mainImageBuffer = await sharp(imageFile.buffer)
-            .resize(800, 800, { fit: 'cover', position: 'attention' })
+            .resize(780, 780, { fit: 'cover', position: 'attention' })
             .toBuffer();
 
-        // Capa 3: Marca de agua, procesada (asumiendo PNG transparente)
+        // Capa 3: Marca de agua, pequeña y con opacidad.
         const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize(800, 800)
+            .resize({ width: 200 }) // Tamaño pequeño y proporcional
             .composite([{
-                input: Buffer.from([255, 255, 255, 255 * 0.85]), // Capa de opacidad (85% transparente)
+                input: Buffer.from([255, 255, 255, 255 * 0.15]), // Opacidad del 85%
                 raw: { width: 1, height: 1, channels: 4 },
                 tile: true,
-                blend: 'multiply'
+                blend: 'dest-in'
             }])
             .toBuffer();
+        
+        const watermarkMetadata = await sharp(watermarkBuffer).metadata();
+
+        // Calcular posición de la marca de agua en la esquina inferior derecha de la imagen principal
+        const imageMargin = 10; // 10px de borde (800 - 780) / 2
+        const watermarkMargin = 15; // Margen interno para la marca de agua
+        const topPosition = (800 - watermarkMetadata.height) - watermarkMargin;
+        const leftPosition = (800 - watermarkMetadata.width) - watermarkMargin;
 
         // Capa 1 (Lienzo) y Composición final
         const finalImage = await sharp({
@@ -81,17 +85,17 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
                 width: 800,
                 height: 800,
                 channels: 4,
-                background: { r: 255, g: 255, b: 255, alpha: 1 }
+                background: { r: 255, g: 255, b: 255, alpha: 1 } // Fondo blanco
             }
         })
         .composite([
-            { input: mainImageBuffer, top: 0, left: 0 },
-            { input: watermarkBuffer, top: 0, left: 0 }
+            { input: mainImageBuffer, gravity: 'center' }, // Centra la imagen del equipo
+            { input: watermarkBuffer, top: topPosition, left: leftPosition } // Posiciona la marca de agua
         ])
         .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
         .toBuffer();
 
-        console.log('[NexusConverter] Composición de 3 capas finalizada exitosamente.');
+        console.log('[NexusConverter] Composición con marco finalizada exitosamente.');
 
         res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
         res.send(finalImage);
@@ -206,11 +210,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.7.1', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.8.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.7.1 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v2.8.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
