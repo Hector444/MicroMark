@@ -1,9 +1,11 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.4.0
+ * [NexusDev] - NexusConverter Microservice v2.5.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.4.0 Update: Integrated watermarking functionality into the /convert/image endpoint.
- * The endpoint now accepts an optional 'watermark' file to overlay on the base image.
+ * v2.5.0 Update: Enhanced watermarking functionality.
+ * - Standardizes output image to 800x800px.
+ * - Resizes watermark proportionally.
+ * - Applies 85% opacity to the watermark for better visual integration.
  */
 const express = require('express');
 const multer = require('multer');
@@ -37,7 +39,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.4.0
+// NexusDev: Inicia la actualización del endpoint de imagen v2.5.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -51,34 +53,40 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
         const targetFormat = req.body.format || 'jpeg';
         const quality = parseInt(req.body.quality, 10) || 90;
 
-        let imageProcessor = sharp(imageFile.buffer);
+        // 1. Estandarizar la imagen base a 800x800
+        let imageProcessor = sharp(imageFile.buffer).resize(800, 800, {
+            fit: 'cover',       // Evita la distorsión, recorta si es necesario
+            position: 'attention' // Se centra en la parte más interesante de la imagen
+        });
         
-        // --- Lógica de Marca de Agua ---
+        // --- Lógica de Marca de Agua Mejorada ---
         if (watermarkFile) {
-            console.log('[NexusConverter] Aplicando marca de agua...');
+            console.log('[NexusConverter] Aplicando marca de agua mejorada...');
             
-            const baseImageMetadata = await imageProcessor.metadata();
-            
-            // 1. Redimensionar marca de agua al 30% del ancho de la imagen base
-            const watermarkResizedBuffer = await sharp(watermarkFile.buffer)
-                .resize({ 
-                    width: Math.round(baseImageMetadata.width * 0.30) 
-                })
+            // 2. Redimensionar marca de agua al 25% del ancho (200px) y aplicar opacidad del 85%
+            const watermarkWithOpacityBuffer = await sharp(watermarkFile.buffer)
+                .resize({ width: 200 }) // 25% de 800px
+                .composite([{
+                    input: Buffer.from([0, 0, 0, 255 * 0.15]), // Capa de opacidad (15% transparente)
+                    raw: { width: 1, height: 1, channels: 4 },
+                    tile: true,
+                    blend: 'dest-in'
+                }])
                 .toBuffer();
 
-            // 2. Calcular posición (esquina inferior derecha con margen del 2%)
-            const watermarkMetadata = await sharp(watermarkResizedBuffer).metadata();
-            const margin = Math.round(baseImageMetadata.width * 0.02);
-            const top = baseImageMetadata.height - watermarkMetadata.height - margin;
-            const left = baseImageMetadata.width - watermarkMetadata.width - margin;
+            // 3. Calcular posición (esquina inferior derecha con margen del 2%)
+            const watermarkMetadata = await sharp(watermarkWithOpacityBuffer).metadata();
+            const margin = Math.round(800 * 0.02); // Margen del 2% de 800px
+            const top = 800 - watermarkMetadata.height - margin;
+            const left = 800 - watermarkMetadata.width - margin;
             
-            // 3. Superponer la imagen usando composite
+            // 4. Superponer la imagen usando composite
             imageProcessor.composite([{
-                input: watermarkResizedBuffer,
+                input: watermarkWithOpacityBuffer,
                 top: top,
                 left: left,
             }]);
-            console.log('[NexusConverter] Marca de agua compuesta exitosamente.');
+            console.log('[NexusConverter] Marca de agua mejorada compuesta exitosamente.');
         }
         
         // --- Conversión de Formato y Salida ---
@@ -187,10 +195,6 @@ app.get('/convert/youtube', async (req, res) => {
 
         const outputPath = path.join(TMP_DIR, `youtube_video_${Date.now()}.${format}`);
         
-        // Comando yt-dlp optimizado para obtener la mejor calidad de video y audio combinados en un mp4.
-        // -f 'bv[ext=mp4]+ba[ext=m4a]/b[ext=mp4]': Selecciona el mejor video con extensión mp4 y el mejor audio con m4a, y los une.
-        // --merge-output-format mp4: Asegura que el contenedor final sea mp4, incluso si los streams originales no lo son.
-        // --output: Especifica la ruta de salida.
         const command = `yt-dlp -f 'bv[ext=mp4]+ba[ext=m4a]/b[ext=mp4]' --merge-output-format mp4 \"${youtubeUrl}\" -o \"${outputPath}\"`;
         
         console.log(`[NexusConverter] Ejecutando comando yt-dlp: ${command}`);
@@ -218,11 +222,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.4.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.5.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.4.0 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v2.5.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
