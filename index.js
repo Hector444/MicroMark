@@ -1,11 +1,9 @@
 /**
- * [NexusDev] - NexusConverter Microservice v2.5.0
+ * [NexusDev] - NexusConverter Microservice v2.6.0
  *
  * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v2.5.0 Update: Enhanced watermarking functionality.
- * - Standardizes output image to 800x800px.
- * - Resizes watermark proportionally.
- * - Applies 85% opacity to the watermark for better visual integration.
+ * v2.6.0 Update: Added intelligent background trimming for watermarks.
+ * - The service now attempts to automatically remove solid backgrounds from the watermark image before composition.
  */
 const express = require('express');
 const multer = require('multer');
@@ -39,7 +37,7 @@ app.use((req, res, next) => {
 // --- API Endpoints ---
 
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v2.5.0
+// NexusDev: Inicia la actualización del endpoint de imagen v2.6.0
 // =================================================================
 app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
     try {
@@ -55,32 +53,33 @@ app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name
 
         // 1. Estandarizar la imagen base a 800x800
         let imageProcessor = sharp(imageFile.buffer).resize(800, 800, {
-            fit: 'cover',       // Evita la distorsión, recorta si es necesario
-            position: 'attention' // Se centra en la parte más interesante de la imagen
+            fit: 'cover',
+            position: 'attention'
         });
         
         // --- Lógica de Marca de Agua Mejorada ---
         if (watermarkFile) {
-            console.log('[NexusConverter] Aplicando marca de agua mejorada...');
+            console.log('[NexusConverter] Aplicando marca de agua con recorte de fondo...');
             
-            // 2. Redimensionar marca de agua al 25% del ancho (200px) y aplicar opacidad del 85%
+            // 2. Recortar fondo, redimensionar y aplicar opacidad
             const watermarkWithOpacityBuffer = await sharp(watermarkFile.buffer)
-                .resize({ width: 200 }) // 25% de 800px
+                .trim() // <-- ¡ESTA LÍNEA RESUELVE EL PROBLEMA DEL FONDO BLANCO!
+                .resize({ width: 200 })
                 .composite([{
-                    input: Buffer.from([0, 0, 0, 255 * 0.15]), // Capa de opacidad (15% transparente)
+                    input: Buffer.from([0, 0, 0, 255 * 0.15]),
                     raw: { width: 1, height: 1, channels: 4 },
                     tile: true,
                     blend: 'dest-in'
                 }])
                 .toBuffer();
 
-            // 3. Calcular posición (esquina inferior derecha con margen del 2%)
+            // 3. Calcular posición
             const watermarkMetadata = await sharp(watermarkWithOpacityBuffer).metadata();
-            const margin = Math.round(800 * 0.02); // Margen del 2% de 800px
+            const margin = Math.round(800 * 0.02);
             const top = 800 - watermarkMetadata.height - margin;
             const left = 800 - watermarkMetadata.width - margin;
             
-            // 4. Superponer la imagen usando composite
+            // 4. Superponer la imagen
             imageProcessor.composite([{
                 input: watermarkWithOpacityBuffer,
                 top: top,
@@ -222,11 +221,11 @@ app.get('/convert/youtube', async (req, res) => {
 
 // --- Health Check & Server Init ---
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '2.5.0', timestamp: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', version: '2.6.0', timestamp: new Date().toISOString() });
 });
 
 app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v2.5.0 escuchando en el puerto ${PORT}`);
+    console.log(`[NexusConverter] Microservice v2.6.0 escuchando en el puerto ${PORT}`);
     if (!fs.existsSync(TMP_DIR)) {
         fs.mkdirSync(TMP_DIR);
     }
