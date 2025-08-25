@@ -1,200 +1,100 @@
-/**
- * [NexusDev] - NexusConverter Microservice v3.2.0
- *
- * Mission: Provide a multi-format, high-performance API for converting local files and YouTube videos.
- * v3.2.0 Update: Maximized watermark size and opacity for a dominant branding effect.
- * - Watermark is resized to 95% of the main image's width.
- * - Uses a direct 90% opacity for a more solid visual.
- */
-const express = require('express');
-const multer = require('multer');
-const sharp = require('sharp');
-const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
-const fs = require('fs');
-const { exec } = require('child_process');
-const libre = require('libreoffice-convert');
-const util = require('util');
-
-libre.convertAsync = util.promisify(libre.convert);
-
-// --- Configuration ---
-const app = express();
-const PORT = process.env.PORT || 3000;
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 500 * 1024 * 1024 }
-});
-const TMP_DIR = '/tmp';
-
-// --- Middleware ---
-app.use(express.json());
-app.use((req, res, next) => {
-    console.log(`[NexusConverter] Request received: ${req.method} ${req.path}`);
-    next();
-});
-
-// --- API Endpoints ---
-
 // =================================================================
-// NexusDev: Inicia la actualización del endpoint de imagen v3.2.0
+// NexusDev: Endpoint de imagen v4.1.0 (marca de agua diagonal grande)
 // =================================================================
-app.post('/convert/image', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]), async (req, res) => {
+app.post(
+  '/convert/image',
+  upload.fields([{ name: 'image', maxCount: 1 }, { name: 'watermark', maxCount: 1 }]),
+  async (req, res) => {
     try {
-        const imageFile = req.files.image ? req.files.image[0] : null;
-        const watermarkFile = req.files.watermark ? req.files.watermark[0] : null;
+      const imageFile = req.files?.image?.[0];
+      const logoFile  = req.files?.watermark?.[0];
+      if (!imageFile || !logoFile) {
+        return res.status(400).json({ success: false, error: 'Se requieren "image" y "watermark".' });
+      }
 
-        if (!imageFile || !watermarkFile) {
-            return res.status(400).json({ success: false, error: 'Se requieren los campos "image" y "watermark".' });
+      // ---- Parámetros opcionales ----
+      const targetFormat      = (req.body.format || 'jpeg').toLowerCase();    // 'jpeg' | 'png'
+      const quality           = parseInt(req.body.quality, 10) || 90;
+      const layout            = (req.body.layout || 'sheet').toLowerCase();   // 'sheet' | 'overlay'
+      const watermarkMode     = (req.body.watermarkMode || 'diagonal').toLowerCase(); // 'diagonal' | 'center'
+      const watermarkOpacity  = Math.max(0, Math.min(1, parseFloat(req.body.watermarkOpacity ?? '0.30'))); // 0..1
+      const watermarkScale    = Math.max(0.1, parseFloat(req.body.watermarkScale ?? '2.5')); // relativo al ancho
+      const watermarkAngle    = parseFloat(req.body.watermarkAngle ?? '45');  // grados
+
+      // ---- Dimensiones base ----
+      const canvasWidth  = layout === 'sheet' ? 800 : 1200;   // para overlay damos más resolución
+      const canvasHeight = layout === 'sheet' ? 1000 : 1200;
+      const mainImageHeight = layout === 'sheet' ? 800 : canvasHeight; // en overlay ocupa todo
+
+      // ---- 1) Fondo blanco (con alfa) ----
+      const base = sharp({
+        create: {
+          width: canvasWidth,
+          height: canvasHeight,
+          channels: 4,
+          background: { r: 255, g: 255, b: 255, alpha: 1 }
         }
+      });
 
-        const targetFormat = req.body.format || 'jpeg';
-        const quality = parseInt(req.body.quality, 10) || 90;
+      // ---- 2) Logo de marca de agua preparado (gigante + diagonal opcional) ----
+      // Escalamos el ancho del logo respecto al ancho del lienzo
+      let logoPre = sharp(logoFile.buffer)
+        .resize({ width: Math.round(canvasWidth * watermarkScale) }, { fit: 'inside' });
 
-        console.log('[NexusConverter] Aplicando marca de agua maximizada (v3.2.0)...');
+      if (watermarkMode === 'diagonal') {
+        // Rotamos con fondo transparente
+        logoPre = logoPre.rotate(watermarkAngle, { background: { r: 255, g: 255, b: 255, alpha: 0 } });
+      }
 
-        const imageProcessor = sharp(imageFile.buffer);
-        const imageMetadata = await imageProcessor.metadata();
+      // Forzamos PNG para preservar alfa en composite
+      const logoPrepared = await logoPre.png().toBuffer();
+      const logoMeta = await sharp(logoPrepared).metadata();
 
-        // --- Lógica de Marca de Agua Maximizada ---
-        const watermarkBuffer = await sharp(watermarkFile.buffer)
-            .resize({ width: Math.round(imageMetadata.width * 0.95) }) // <-- CAMBIO: Marca de agua al 95% del ancho
-            .ensureAlpha(0.9) // <-- CAMBIO: Opacidad directa y fuerte al 90%
-            .toBuffer();
+      // Centro del lienzo
+      const wmLeft = Math.round((canvasWidth  - (logoMeta.width  ?? canvasWidth))  / 2);
+      const wmTop  = Math.round((canvasHeight - (logoMeta.height ?? canvasHeight)) / 2);
 
-        // Composición final: superponer la marca de agua en el centro
-        const finalImage = await imageProcessor
-            .composite([
-                {
-                    input: watermarkBuffer,
-                    gravity: 'center'
-                }
-            ])
-            .toFormat(targetFormat.toLowerCase() === 'png' ? 'png' : 'jpeg', { quality })
-            .toBuffer();
+      // ---- 3) Imagen del producto ----
+      // En 'sheet' la imagen va 800x800 arriba. En 'overlay' ocupa todo el lienzo.
+      const productImageBuffer = await sharp(imageFile.buffer)
+        .resize(
+          canvasWidth,
+          mainImageHeight,
+          { fit: 'cover', position: 'attention' }
+        )
+        .png()
+        .toBuffer();
 
-        console.log('[NexusConverter] Marca de agua maximizada aplicada exitosamente.');
+      // ---- 4) (Opcional) Logo “normal” abajo en modo sheet ----
+      let bottomLogoComp = [];
+      if (layout === 'sheet') {
+        const bottomLogoBuf = await sharp(logoFile.buffer).resize({ width: 400 }).png().toBuffer();
+        const bottomMeta = await sharp(bottomLogoBuf).metadata();
+        const bottomLeft = Math.round((canvasWidth - (bottomMeta.width ?? 400)) / 2);
+        const bottomTop  = 800 + Math.round(((canvasHeight - 800) - (bottomMeta.height ?? 0)) / 2);
 
-        res.setHeader('Content-Type', `image/${targetFormat.toLowerCase()}`);
-        res.send(finalImage);
+        bottomLogoComp.push({ input: bottomLogoBuf, left: bottomLeft, top: bottomTop });
+      }
 
+      // ---- 5) Composición (marca de agua detrás del producto) ----
+      // Primero el watermark con opacidad, luego el producto por encima.
+      const composed = await base
+        .composite([
+          { input: logoPrepared, left: wmLeft, top: wmTop, opacity: watermarkOpacity },
+          { input: productImageBuffer, left: 0, top: 0 },
+          ...bottomLogoComp
+        ])
+        .toFormat(targetFormat === 'png' ? 'png' : 'jpeg', { quality })
+        .toBuffer();
+
+      res.setHeader('Content-Type', `image/${targetFormat === 'png' ? 'png' : 'jpeg'}`);
+      res.send(composed);
     } catch (error) {
-        console.error('[NexusConverter] Error en /convert/image:', error);
-        res.status(500).json({ success: false, error: 'Error procesando la imagen.', details: error.message });
+      console.error('[NexusConverter] Error en /convert/image:', error);
+      res.status(500).json({ success: false, error: 'Error procesando la imagen.', details: error.message });
     }
-});
+  }
+);
 // =================================================================
-// NexusDev: Finaliza la actualización del endpoint de imagen
+// Fin v4.1.0
 // =================================================================
-
-
-app.post('/convert/video', upload.single('video'), (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ success: false, error: 'Campo "video" requerido.' });
-        
-        const format = req.body.format || 'mp4';
-        const inputPath = path.join(TMP_DIR, `input_${Date.now()}`);
-        const outputPath = `${inputPath}.${format}`;
-
-        fs.writeFileSync(inputPath, req.file.buffer);
-
-        ffmpeg(inputPath)
-            .toFormat(format)
-            .on('end', () => {
-                console.log('[NexusConverter] Conversión de video finalizada.');
-                res.setHeader('Content-Type', `video/${format}`);
-                res.sendFile(outputPath, (err) => {
-                    fs.unlink(inputPath, () => {});
-                    fs.unlink(outputPath, () => {});
-                    if (err) console.error("Error al enviar archivo de video:", err);
-                });
-            })
-            .on('error', (err) => {
-                console.error('[NexusConverter] Error en ffmpeg:', err);
-                fs.unlink(inputPath, () => {});
-                res.status(500).json({ success: false, error: 'Fallo al convertir el video.', details: err.message });
-            })
-            .save(outputPath);
-
-    } catch (error) {
-        console.error('[NexusConverter] Error en /convert/video:', error);
-        res.status(500).json({ success: false, error: 'Error interno del servidor.', details: error.message });
-    }
-});
-
-
-app.post('/convert/document', upload.single('document'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ success: false, error: 'Campo \"document\" requerido.' });
-
-        const format = req.body.format || 'pdf';
-        const inputPath = path.join(TMP_DIR, req.file.originalname);
-        const outputPath = path.join(TMP_DIR, `${path.parse(req.file.originalname).name}.${format}`);
-
-        fs.writeFileSync(inputPath, req.file.buffer);
-
-        console.log(`[NexusConverter] Intentando convertir ${inputPath} a ${format}`);
-
-        const pdfBuffer = await libre.convertAsync(req.file.buffer, `.${format}`, undefined);
-        
-        fs.writeFileSync(outputPath, pdfBuffer);
-        
-        console.log(`[NexusConverter] Documento convertido a ${format}`);
-        res.setHeader('Content-Type', 'application/pdf'); // Siempre devolvemos PDF
-        res.sendFile(outputPath, (err) => {
-            fs.unlink(inputPath, () => {});
-            fs.unlink(outputPath, () => {});
-            if (err) console.error("Error al enviar archivo de documento:", err);
-        });
-
-    } catch (error) {
-        console.error('[NexusConverter] Error en /convert/document:', error);
-        res.status(500).json({ success: false, error: 'Fallo al convertir el documento.', details: error.message });
-    }
-});
-
-
-app.get('/convert/youtube', async (req, res) => {
-    try {
-        const { url: youtubeUrl, format = 'mp4' } = req.query;
-        if (!youtubeUrl) return res.status(400).json({ success: false, error: 'Parámetro \"url\" de YouTube es requerido.' });
-
-        const outputPath = path.join(TMP_DIR, `youtube_video_${Date.now()}.${format}`);
-        
-        const command = `yt-dlp -f 'bv[ext=mp4]+ba[ext=m4a]/b[ext=mp4]' --merge-output-format mp4 \"${youtubeUrl}\" -o \"${outputPath}\"`;
-        
-        console.log(`[NexusConverter] Ejecutando comando yt-dlp: ${command}`);
-
-        exec(command, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`[NexusConverter] Error en 'yt-dlp': ${stderr}`);
-                return res.status(500).json({ success: false, error: 'Fallo al descargar o procesar el video de YouTube.', details: stderr });
-            }
-            
-            console.log('[NexusConverter] Descarga de YouTube completada.');
-            res.setHeader('Content-Type', `video/${format}`);
-            res.sendFile(outputPath, (err) => {
-                fs.unlink(outputPath, () => {}); // Cleanup
-                if (err) console.error("Error al enviar archivo de YouTube:", err);
-            });
-        });
-
-    } catch (error) {
-        console.error('[NexusConverter] Error en /convert/youtube:', error);
-        res.status(500).json({ success: false, error: 'Error interno del servidor.', details: error.message });
-    }
-});
-
-
-// --- Health Check & Server Init ---
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', version: '3.2.0', timestamp: new Date().toISOString() });
-});
-
-app.listen(PORT, () => {
-    console.log(`[NexusConverter] Microservice v3.2.0 escuchando en el puerto ${PORT}`);
-    if (!fs.existsSync(TMP_DIR)) {
-        fs.mkdirSync(TMP_DIR);
-    }
-});
